@@ -100,8 +100,8 @@ Ctrl+Enter
 
 ✅ Confirm Text
 
-📂 Project Structure
-
+### 📂 Project Structure
+```bash
 modern-image-editor/
 ├── image_editor.py       # 🎯 Main application file
 ├── ui/                   # 🎨 User interface components
@@ -114,6 +114,7 @@ modern-image-editor/
 └── utils/                # 🏗️ Utility modules
     └── keyboard_shortcuts.py # ⌨️ Keyboard shortcut handling
 
+```
 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.

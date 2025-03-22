@@ -27,6 +27,7 @@ class ModernImageEditor:
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         self.root.geometry(f"{screen_width}x{screen_height}")
+        self.root.bind("<Escape>", self.cancel_text_editing)
         
         self.image_path = None
         self.original_image = None
@@ -107,36 +108,6 @@ class ModernImageEditor:
         self.canvas.bind("<ButtonPress-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
-
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Modern Image Editor")
-        self.root.geometry("1200x700")
-        
-        self.image_path = None
-        self.original_image = None
-        self.current_image = None
-        self.display_image = None
-        
-        self.crop_start_x = None
-        self.crop_start_y = None
-        self.crop_rect = None
-        self.is_cropping = False
-        
-        # Initialize undo/redo history
-        self.history = []
-        self.history_index = -1
-        self.max_history = 20  # Maximum number of states to keep in history
-        
-        self.tools = Toolss(self)
-        self.create_ui()
-        self.tools = Toolss(self)
-        
-        # Connect sidebar callbacks after tools are created
-        self.connect_sidebar_callbacks()
-        self.menu_manager.create_menu()  # Add this line
-        self.setup_drag_drop()
-        self.setup_zoom_functionality()
 
     def connect_sidebar_callbacks(self):
         """Connect sidebar UI elements to tool methods after tools are created."""
@@ -485,7 +456,7 @@ class ModernImageEditor:
     def show_shortcuts_dialog(self, event=None):
         """Show keyboard shortcuts dialog."""
         self.keyboard_shortcuts.show_shortcuts_dialog()
-
+        
     def activate_text_tool(self, event=None):
         """Activate the text tool and show its properties."""
         self.active_tool = "text"
@@ -496,8 +467,138 @@ class ModernImageEditor:
         
         # Change cursor to indicate text tool is active
         self.canvas.config(cursor="xterm")  # Text cursor
+        
+        # Bind canvas click for text placement
+        self.canvas.bind("<Button-1>", self.place_text_on_canvas)
 
-    def add_text_to_image(self, text, font_family, font_size, bold, italic, color):
+    def place_text_on_canvas(self, event):
+        """Handle click event to place text at the clicked position."""
+        if self.active_tool != "text" or self.current_image is None:
+            return
+        
+        # Get click position relative to the image
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        # Calculate the position of the image on the canvas
+        img_width, img_height = self.display_image.size
+        img_x = (canvas_width - img_width) // 2
+        img_y = (canvas_height - img_height) // 2
+        
+        # Check if click is within image bounds
+        if (img_x <= event.x <= img_x + img_width and 
+            img_y <= event.y <= img_y + img_height):
+            
+            # Calculate position relative to the image
+            rel_x = event.x - img_x
+            rel_y = event.y - img_y
+            
+            # Scale coordinates to original image size if zoomed
+            if hasattr(self, 'zoom_level'):
+                scale_x = self.current_image.width / img_width
+                scale_y = self.current_image.height / img_height
+                img_x_pos = int(rel_x * scale_x)
+                img_y_pos = int(rel_y * scale_y)
+            else:
+                img_x_pos = rel_x
+                img_y_pos = rel_y
+            
+            # Create an editable text field on the canvas
+            self.create_editable_text(img_x_pos, img_y_pos, event.x, event.y)
+
+    def create_editable_text(self, img_x, img_y, canvas_x, canvas_y):
+        """Create an editable text field directly on the canvas."""
+        # Get text properties from the properties panel
+        text_props = self.properties_panel.text_properties
+        
+        # Create a text entry widget on the canvas
+        text_entry = tk.Text(
+            self.canvas,
+            width=20,
+            height=4,
+            font=(text_props["font_family"], text_props["font_size"]),
+            wrap="word",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground="#3584e4"
+        )
+        
+        # Apply styling based on text properties
+        if text_props["bold"] and text_props["italic"]:
+            text_entry.configure(font=(text_props["font_family"], text_props["font_size"], "bold italic"))
+        elif text_props["bold"]:
+            text_entry.configure(font=(text_props["font_family"], text_props["font_size"], "bold"))
+        elif text_props["italic"]:
+            text_entry.configure(font=(text_props["font_family"], text_props["font_size"], "italic"))
+        
+        text_entry.configure(fg=text_props["color"], bg="transparent")
+        
+        # Position the text entry on the canvas
+        text_window = self.canvas.create_window(
+            canvas_x, canvas_y,
+            window=text_entry,
+            anchor="nw"
+        )
+        
+        # Store the text entry and its position for later use
+        self.active_text_entry = {
+            "widget": text_entry,
+            "window_id": text_window,
+            "img_pos": (img_x, img_y)
+        }
+        
+        # Focus the text entry
+        text_entry.focus_set()
+        
+        # Bind events for finalizing text
+        text_entry.bind("<FocusOut>", self.finalize_text)
+        text_entry.bind("<Control-Return>", self.finalize_text)  # Ctrl+Enter to confirm
+        
+        # Update status
+        self.status_bar.configure(text="Type your text and press Ctrl+Enter or click elsewhere to apply")
+    def finalize_text(self, event):
+        """Finalize the text and apply it to the image."""
+        if not hasattr(self, 'active_text_entry') or self.active_text_entry is None:
+            return
+        
+        # Get the text from the entry widget
+        text_content = self.active_text_entry["widget"].get("1.0", "end-1c")
+        
+        # If text is empty, just remove the widget without applying
+        if not text_content.strip():
+            self.canvas.delete(self.active_text_entry["window_id"])
+            self.active_text_entry = None
+            return
+        
+        # Get text properties
+        text_props = self.properties_panel.text_properties
+        
+        # Get the position on the image
+        img_x, img_y = self.active_text_entry["img_pos"]
+        
+        # Remove the text entry widget
+        self.canvas.delete(self.active_text_entry["window_id"])
+        self.active_text_entry = None
+        
+        # Add the text to the image
+        self.add_text_to_image(
+            text_content,
+            text_props["font_family"],
+            text_props["font_size"],
+            text_props["bold"],
+            text_props["italic"],
+            text_props["color"],
+            position=(img_x, img_y)
+        )
+
+    def cancel_text_editing(self, event=None):
+        """Cancel the current text editing operation."""
+        if hasattr(self, 'active_text_entry') and self.active_text_entry:
+            self.canvas.delete(self.active_text_entry["window_id"])
+            self.active_text_entry = None
+            self.status_bar.configure(text="Text editing canceled")
+
+    def add_text_to_image(self, text, font_family, font_size, bold, italic, color, position=None):
         """Add text to the current image."""
         if self.current_image is None:
             self.status_bar.configure(text="No image to add text to")
@@ -527,7 +628,6 @@ class ModernImageEditor:
                 font_style = "italic"
             
             # Try to load the font - this is simplified and may not work on all systems
-            # For a production app, you'd need to handle font loading more robustly
             try:
                 # Try to use TrueType font if available
                 font = ImageFont.truetype(font_family, font_size)
@@ -545,10 +645,13 @@ class ModernImageEditor:
             print(f"Error loading font: {e}")
             font = ImageFont.load_default()
         
-        # For now, we'll add text at the center of the image
-        # In a real application, you'd want to let the user click to position the text
-        width, height = img_copy.size
-        position = (width // 2, height // 2)
+        # Use provided position or default to center of image
+        if position is None:
+            width, height = img_copy.size
+            position = (width // 2, height // 2)
+            anchor = "mm"  # Center the text at the position
+        else:
+            anchor = "lt"  # Top-left anchoring for direct placement
         
         # Draw the text
         draw.text(
@@ -556,7 +659,7 @@ class ModernImageEditor:
             text, 
             fill=color, 
             font=font,
-            anchor="mm"  # Center the text at the position
+            anchor=anchor
         )
         
         # Update the current image

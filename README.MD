@@ -48,21 +48,21 @@ pip install -r requirements.txt
 python image_editor.py
 ```
 
-📌 Requirements
+## 📌 Requirements
 
-🐍 Python 3.7+
+- 🐍 Python 3.7+
 
-🖼️ Pillow (PIL Fork)
+- 🖼️ Pillow (PIL Fork)
 
-🎨 CustomTkinter
+- 🎨 CustomTkinter
 
-📂 tkinterdnd2 (optional, for drag and drop support)
+- 📂 tkinterdnd2 (optional, for drag and drop support)
 
-⌨️ Keyboard Shortcuts
+### ⌨️ Keyboard Shortcuts
 
-Shortcut
+## Shortcut
 
-Action
+- **Action**
 
 Ctrl+O
 
@@ -115,7 +115,7 @@ modern-image-editor/
     └── keyboard_shortcuts.py # ⌨️ Keyboard shortcut handling
 
 ```
-🤝 Contributing
+## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
@@ -129,7 +129,7 @@ Push to the branch (git push origin feature/amazing-feature)
 
 Open a Pull Request
 
-📜 License
+## 📜 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 

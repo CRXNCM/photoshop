@@ -1,32 +1,204 @@
 import os
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 from PIL import Image, ImageTk, ImageOps, ImageEnhance, ImageFilter
 import customtkinter as ctk
 import tkinter as tk
+from PIL import ImageDraw
+
 class Toolss:
     def __init__(self, editor):
         self.editor = editor
     
     def open_image(self):
+        """Open an image file with extended format support and larger file sizes (up to 200MB)"""
+        # Expanded list of supported image formats
+        file_types = [
+            ("All Image Files", "*.jpg *.jpeg *.png *.bmp *.gif *.tiff *.tif *.webp *.ico *.ppm *.pgm *.pbm *.psd *.eps *.svg"),
+            ("JPEG Files", "*.jpg *.jpeg"),
+            ("PNG Files", "*.png"),
+            ("BMP Files", "*.bmp"),
+            ("GIF Files", "*.gif"),
+            ("TIFF Files", "*.tiff *.tif"),
+            ("WebP Files", "*.webp"),
+            ("Icon Files", "*.ico"),
+            ("Photoshop Files", "*.psd"),
+            ("SVG Files", "*.svg"),
+            ("All Files", "*.*")
+        ]
+        
         self.editor.image_path = filedialog.askopenfilename(
-            filetypes=[("Image files", "*.jpg *.jpeg *.png *.bmp *.gif")]
+            title="Open Image",
+            filetypes=file_types
         )
-    
-        if self.editor.image_path:
-            try:
-                self.editor.original_image = Image.open(self.editor.image_path)
-                self.editor.current_image = self.editor.original_image.copy()
-                self.display_image_on_canvas()
+
+        if not self.editor.image_path:
+            return  # User cancelled
+        
+        try:
+            # Check file size before opening (200MB limit)
+            file_size = os.path.getsize(self.editor.image_path)
+            max_size = 500 * 1024 * 1024  # 200MB in bytes
+            
+            if file_size > max_size:
+                messagebox.showerror(
+                    "File Too Large", 
+                    f"The selected file is {file_size / (1024 * 1024):.1f}MB, which exceeds the maximum supported size of 200MB."
+                )
+                return
+            
+            # Get file extension
+            _, ext = os.path.splitext(self.editor.image_path)
+            ext = ext.lower()
+            
+            # Special handling for SVG files
+            if ext == '.svg':
+                try:
+                    # Convert SVG to PNG using cairosvg
+                    import cairosvg
+                    import tempfile
+                    
+                    # Create a temporary PNG file
+                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
+                        temp_png_path = tmp_file.name
+                    
+                    # Convert SVG to PNG
+                    cairosvg.svg2png(url=self.editor.image_path, write_to=temp_png_path, output_width=1000)
+                    
+                    # Open the PNG
+                    self.editor.original_image = Image.open(temp_png_path)
+                    
+                    # Clean up the temporary file
+                    os.unlink(temp_png_path)
+                    
+                    # Show a note about the conversion
+                    self.editor.status_bar.configure(text=f"Converted SVG to PNG: {os.path.basename(self.editor.image_path)}")
+                except ImportError:
+                    messagebox.showerror("Error", "SVG support requires the cairosvg package. Please install it with: pip install cairosvg")
+                    return
+                except Exception as e:
+                    messagebox.showerror("SVG Conversion Error", f"Could not convert SVG: {str(e)}")
+                    return
+            # Special handling for PSD files
+            elif ext == '.psd':
+                try:
+                    # Try to use PSDImage from psd_tools
+                    from psd_tools import PSDImage
+                    psd = PSDImage.open(self.editor.image_path)
+                    self.editor.original_image = psd.compose()
+                    
+                    # Show a note about the conversion
+                    self.editor.status_bar.configure(text=f"Opened PSD file: {os.path.basename(self.editor.image_path)}")
+                except ImportError:
+                    messagebox.showerror("Error", "PSD support requires the psd_tools package. Please install it with: pip install psd-tools")
+                    return
+                except Exception as e:
+                    messagebox.showerror("PSD Opening Error", f"Could not open PSD file: {str(e)}")
+                    return
+            # For other image formats, use PIL
+            else:
+                # For large files, use a progress dialog
+                if file_size > 10 * 1024 * 1024:  # 10MB
+                    progress_window = tk.Toplevel(self.editor.root)
+                    progress_window.title("Loading Image")
+                    progress_window.geometry("300x100")
+                    progress_window.transient(self.editor.root)
+                    progress_window.grab_set()
+                    
+                    # Center the window
+                    progress_window.update_idletasks()
+                    x = (progress_window.winfo_screenwidth() // 2) - (300 // 2)
+                    y = (progress_window.winfo_screenheight() // 2) - (100 // 2)
+                    progress_window.geometry(f"300x100+{x}+{y}")
+                    
+                    # Add a label
+                    label = tk.Label(progress_window, text=f"Loading {os.path.basename(self.editor.image_path)}...")
+                    label.pack(pady=(20, 10))
+                    
+                    # Add a progress bar
+                    progress = ttk.Progressbar(progress_window, mode='indeterminate')
+                    progress.pack(fill='x', padx=20)
+                    progress.start()
+                    
+                    # Update the UI
+                    progress_window.update()
+                    
+                    # Load the image in a separate thread to keep UI responsive
+                    def load_image_thread():
+                        try:
+                            img = Image.open(self.editor.image_path)
+                            self.editor.original_image = img
+                            
+                            # Update UI in the main thread
+                            self.editor.root.after(0, lambda: self.finish_loading(progress_window))
+                        except Exception as e:
+                            # Handle errors in the main thread
+                            self.editor.root.after(0, lambda: self.handle_loading_error(progress_window, str(e)))
+                    
+                    # Start the loading thread
+                    import threading
+                    thread = threading.Thread(target=load_image_thread)
+                    thread.daemon = True
+                    thread.start()
+                    
+                    # Don't proceed further - the thread will call finish_loading when done
+                    return
+                else:
+                    # For smaller files, load directly
+                    self.editor.original_image = Image.open(self.editor.image_path)
+            
+            # Create a copy for editing
+            self.editor.current_image = self.editor.original_image.copy()
+            
+            # Display the image
+            self.display_image_on_canvas()
+            
+            # Update status bar
+            if not ext == '.svg' and not ext == '.psd':  # Already updated for these formats
                 self.editor.status_bar.configure(text=f"Loaded: {os.path.basename(self.editor.image_path)}")
             
-                # Clear history when opening a new image
-                self.editor.history = [self.editor.current_image.copy()]
-                self.editor.history_index = 0
-                self.editor.update_undo_redo_buttons()
+            # Add to recent files if the menu manager exists
+            if hasattr(self.editor, 'menu_manager'):
+                self.editor.menu_manager.add_to_recent_files(self.editor.image_path)
             
-            except Exception as e:
-                messagebox.showerror("Error", f"Could not open image: {str(e)}")
-    
+            # Clear history when opening a new image
+            self.editor.history = [self.editor.current_image.copy()]
+            self.editor.history_index = 0
+            self.editor.update_undo_redo_buttons()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open image: {str(e)}")
+
+    def finish_loading(self, progress_window):
+        """Complete the image loading process after the thread finishes"""
+        # Close the progress window
+        progress_window.destroy()
+        
+        # Create a copy for editing
+        self.editor.current_image = self.editor.original_image.copy()
+        
+        # Display the image
+        self.display_image_on_canvas()
+        
+        # Update status bar
+        self.editor.status_bar.configure(text=f"Loaded: {os.path.basename(self.editor.image_path)}")
+        
+        # Add to recent files if the menu manager exists
+        if hasattr(self.editor, 'menu_manager'):
+            self.editor.menu_manager.add_to_recent_files(self.editor.image_path)
+        
+        # Clear history when opening a new image
+        self.editor.history = [self.editor.current_image.copy()]
+        self.editor.history_index = 0
+        self.editor.update_undo_redo_buttons()
+
+    def handle_loading_error(self, progress_window, error_message):
+        """Handle errors that occur during image loading"""
+        # Close the progress window
+        progress_window.destroy()
+        
+        # Show error message
+        messagebox.showerror("Error", f"Could not open image: {error_message}")
+
     def save_image(self):
         if self.editor.current_image:
             file_path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG", "*.png"), ("JPEG", "*.jpg")])
@@ -315,7 +487,36 @@ class Toolss:
             highlightthickness=0
         )
         preview_canvas.pack(fill="both", expand=True)
+
+    def activate_draw_tool(self):
+        """Activate the drawing tool."""
+        self.editor.active_tool = "draw"
+        self.editor.status_bar.configure(text="Draw Tool: Click and drag to draw")
+        self.editor.canvas.config(cursor="pencil")  # Change cursor to indicate draw mode
         
+        # Set up drawing properties
+        self.editor.draw_color = self.editor.properties_panel.draw_properties["color"]
+        self.editor.draw_size = self.editor.properties_panel.draw_properties["size"]
+        self.editor.draw_last_point = None
+        
+        # Create a temporary image for drawing preview
+        if self.editor.current_image:
+            self.editor.draw_overlay = self.editor.current_image.copy()
+            self.editor.draw_preview = ImageDraw.Draw(self.editor.draw_overlay)
+
+    def apply_drawing(self):
+        """Apply the drawing to the actual image."""
+        if hasattr(self.editor, 'draw_overlay') and self.editor.draw_overlay:
+            # Save current state for undo
+            self.editor.push_to_history()
+            
+            # Apply the drawing to the current image
+            self.editor.current_image = self.editor.draw_overlay.copy()
+            self.editor.display_image_on_canvas()
+            
+            # Reset drawing state
+            self.editor.draw_last_point = None
+
         # Function to update preview
         def update_preview():
             if not preview_var.get() or not self.editor.current_image:

@@ -9,6 +9,7 @@ from ui.toolbar import Toolbarr
 from ui.sidebar import Sidebar
 from ui.menu_manager import MenuManager
 from ui.properties_panel import PropertiesPanel
+from ui.settings_manager import SettingsManager
 
 # import you utilities
 from utils.keyboard_shortcuts import KeyboardShortcuts
@@ -23,11 +24,12 @@ ctk.set_default_color_theme("blue")
 class ModernImageEditor:
     def __init__(self, root):
         self.root = root
+        self.settings_manager = SettingsManager(self)
         self.root.title("Modern Image Editor")
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         self.root.geometry(f"{screen_width}x{screen_height}")
-        self.root.bind("<Escape>", self.cancel_text_editing)
+        
         
         self.image_path = None
         self.original_image = None
@@ -46,11 +48,17 @@ class ModernImageEditor:
         self.max_history = 20  # Maximum number of states to keep in history
         
         self.tools = Toolss(self)
+        
+        self.settings_manager.apply_settings()
         self.create_ui()
+        self.keyboard_shortcuts = KeyboardShortcuts(self)
         self.menu_manager.create_menu()  # Add this line
         self.setup_drag_drop()
         self.setup_zoom_functionality()
         self.tools = Toolss(self)
+        self.root.bind("<Escape>", self.cancel_text_editing)
+        self.menu_manager = MenuManager(self)
+        self.menu_manager.settings_manager.apply_settings()
 
     def create_ui(self):
         # Create the toolbar first - it will appear at the top
@@ -108,6 +116,35 @@ class ModernImageEditor:
         self.canvas.bind("<ButtonPress-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
+    def activate_draw_tool(self, event=None):
+        """Activate the drawing tool."""
+        self.active_tool = "draw"
+        self.status_bar.configure(text="Draw Tool: Click and drag to draw")
+        self.canvas.config(cursor="pencil")  # Change cursor to indicate draw mode
+        
+        # Show drawing properties in the properties panel
+        self.properties_panel.show_draw_properties()
+        
+        # Set up drawing properties
+        if hasattr(self.properties_panel, 'draw_properties'):
+            self.draw_color = self.properties_panel.draw_properties["color"]
+            self.draw_size = self.properties_panel.draw_properties["size"]
+        else:
+            self.draw_color = "#FF0000"  # Default red
+            self.draw_size = 3  # Default size
+        
+        self.draw_last_point = None
+        
+        # Create a temporary image for drawing preview
+        if self.current_image:
+            from PIL import ImageDraw
+            self.draw_overlay = self.current_image.copy()
+            self.draw_preview = ImageDraw.Draw(self.draw_overlay)
+        
+        # Bind canvas events for drawing
+        self.canvas.bind("<Button-1>", self.start_drawing)
+        self.canvas.bind("<B1-Motion>", self.draw)
+        self.canvas.bind("<ButtonRelease-1>", self.stop_drawing)
 
     def connect_sidebar_callbacks(self):
         """Connect sidebar UI elements to tool methods after tools are created."""
@@ -251,6 +288,144 @@ class ModernImageEditor:
         
         # Update UI
         self.update_undo_redo_buttons()
+    def clear_panel(self):
+        """Clear all widgets from the properties panel."""
+        # Destroy all widgets in the panel
+        for widget in self.panel.winfo_children():
+            widget.destroy()
+
+    def cancel_text_editing(self, event=None):
+        """Cancel the current text editing operation."""
+        if hasattr(self, 'active_text_entry') and self.active_text_entry:
+            self.canvas.delete(self.active_text_entry["window_id"])
+            self.active_text_entry = None
+            self.status_bar.configure(text="Text editing canceled")
+
+    def create_editable_text(self, img_x, img_y, canvas_x, canvas_y):
+        """Create an editable text field directly on the canvas."""
+        # Get text properties from the properties panel
+        text_props = self.properties_panel.text_properties
+        
+        # Create a text entry widget on the canvas
+        text_entry = tk.Text(
+            self.canvas,
+            width=20,
+            height=4,
+            font=(text_props["font_family"], text_props["font_size"]),
+            wrap="word",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground="#3584e4"
+        )
+        
+        # Apply styling based on text properties
+        if text_props["bold"] and text_props["italic"]:
+            text_entry.configure(font=(text_props["font_family"], text_props["font_size"], "bold italic"))
+        elif text_props["bold"]:
+            text_entry.configure(font=(text_props["font_family"], text_props["font_size"], "bold"))
+        elif text_props["italic"]:
+            text_entry.configure(font=(text_props["font_family"], text_props["font_size"], "italic"))
+        
+        text_entry.configure(fg=text_props["color"], bg="transparent")
+        
+        # Position the text entry on the canvas
+        text_window = self.canvas.create_window(
+            canvas_x, canvas_y,
+            window=text_entry,
+            anchor="nw"
+        )
+        
+        # Store the text entry and its position for later use
+        self.active_text_entry = {
+            "widget": text_entry,
+            "window_id": text_window,
+            "img_pos": (img_x, img_y)
+        }
+        
+        # Focus the text entry
+        text_entry.focus_set()
+        
+        # Bind events for finalizing text
+        text_entry.bind("<FocusOut>", self.finalize_text)
+        text_entry.bind("<Control-Return>", self.finalize_text)  # Ctrl+Enter to confirm
+        
+        # Update status
+        self.status_bar.configure(text="Type your text and press Ctrl+Enter or click elsewhere to apply")
+
+    def place_text_on_canvas(self, event):
+        """Handle click event to place text at the clicked position."""
+        if self.active_tool != "text" or self.current_image is None:
+            return
+        
+        # Check if display_image exists
+        if self.display_image is None:
+            self.status_bar.configure(text="Please load an image first")
+            return
+        
+        # Get click position relative to the image
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        # Calculate the position of the image on the canvas
+        img_width, img_height = self.display_image.size
+        img_x = (canvas_width - img_width) // 2
+        img_y = (canvas_height - img_height) // 2
+        
+        # Check if click is within image bounds
+        if (img_x <= event.x <= img_x + img_width and 
+            img_y <= event.y <= img_y + img_height):
+            
+            # Calculate position relative to the image
+            rel_x = event.x - img_x
+            rel_y = event.y - img_y
+            
+            # Scale coordinates to original image size if zoomed
+            if hasattr(self, 'zoom_level'):
+                scale_x = self.current_image.width / img_width
+                scale_y = self.current_image.height / img_height
+                img_x_pos = int(rel_x * scale_x)
+                img_y_pos = int(rel_y * scale_y)
+            else:
+                img_x_pos = rel_x
+                img_y_pos = rel_y
+            
+            # Create an editable text field on the canvas
+            self.create_editable_text(img_x_pos, img_y_pos, event.x, event.y)
+
+    def handle_drop(self, event):
+        """Handle the drop event when a file is dropped onto the canvas."""
+        # Get the file path from the event
+        file_path = event.data
+        
+        # Clean up the file path (tkinterdnd2 adds braces and may include multiple files)
+        if file_path.startswith('{') and file_path.endswith('}'):
+            file_path = file_path[1:-1]
+        
+        # If multiple files were dropped, take only the first one
+        if ' ' in file_path and (file_path.startswith('"') or file_path.startswith("'")):
+            # This handles paths with spaces that are quoted
+            import re
+            match = re.match(r'["\'](.*?)["\']', file_path)
+            if match:
+                file_path = match.group(1)
+        elif ' ' in file_path:
+            # If multiple unquoted paths, take the first one
+            file_path = file_path.split(' ')[0]
+        
+        # Check if the file is an image
+        valid_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.gif')
+        if file_path.lower().endswith(valid_extensions):
+            # Set the image path and load the image
+            self.image_path = file_path
+            try:
+                self.original_image = Image.open(file_path)
+                self.current_image = self.original_image.copy()
+                self.display_image_on_canvas()
+                self.status_bar.configure(text=f"Loaded: {os.path.basename(file_path)}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not open image: {str(e)}")
+        else:
+            messagebox.showerror("Error", "Unsupported file type. Please drop an image file.")
 
     def undo(self, event=None):
         """Undo the last action."""
@@ -463,17 +638,168 @@ class ModernImageEditor:
         self.status_bar.configure(text="Text Tool: Click on the image to add text")
         
         # Show text properties in the properties panel
-        self.properties_panel.show_text_properties()
+        if hasattr(self.properties_panel, 'show_text_properties'):
+            self.properties_panel.show_text_properties()
         
         # Change cursor to indicate text tool is active
         self.canvas.config(cursor="xterm")  # Text cursor
         
         # Bind canvas click for text placement
         self.canvas.bind("<Button-1>", self.place_text_on_canvas)
+    def activate_draw_tool(self, event=None):
+        """Activate the drawing tool."""
+        self.active_tool = "draw"
+        self.status_bar.configure(text="Drawing Tool: Click and drag to draw")
+        
+        # Show drawing properties in the properties panel
+        self.properties_panel.show_draw_properties()
+        
+        # Bind canvas events for drawing
+        self.canvas.bind("<Button-1>", self.start_drawing)
+        self.canvas.bind("<B1-Motion>", self.draw)
+        self.canvas.bind("<ButtonRelease-1>", self.stop_drawing)
+
+    def start_drawing(self, event):
+        """Start drawing on the canvas."""
+        if self.active_tool != "draw" or self.current_image is None:
+            return
+        
+        # Get click position relative to the image
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        # Calculate the position of the image on the canvas
+        img_width, img_height = self.display_image.size
+        img_x = (canvas_width - img_width) // 2
+        img_y = (canvas_height - img_height) // 2
+        
+        # Check if click is within image bounds
+        if (img_x <= event.x <= img_x + img_width and 
+            img_y <= event.y <= img_y + img_height):
+            
+            # Calculate position relative to the image
+            rel_x = event.x - img_x
+            rel_y = event.y - img_y
+            
+            # Scale coordinates to original image size if zoomed
+            if hasattr(self, 'zoom_level'):
+                scale_x = self.current_image.width / img_width
+                scale_y = self.current_image.height / img_height
+                img_x_pos = int(rel_x * scale_x)
+                img_y_pos = int(rel_y * scale_y)
+            else:
+                img_x_pos = rel_x
+                img_y_pos = rel_y
+            
+            # Set the last point for drawing
+            self.draw_last_point = (img_x_pos, img_y_pos)
+            
+            # Draw a single point
+            if hasattr(self, 'draw_preview'):
+                self.draw_preview.ellipse(
+                    [(img_x_pos - self.draw_size//2, img_y_pos - self.draw_size//2),
+                    (img_x_pos + self.draw_size//2, img_y_pos + self.draw_size//2)],
+                    fill=self.draw_color
+                )
+                
+                # Update display
+                self.display_drawing_preview()
+
+    def draw(self, event):
+        """Continue drawing as the mouse moves."""
+        if self.active_tool != "draw" or self.current_image is None or self.draw_last_point is None:
+            return
+        
+        # Get current position relative to the image
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        # Calculate the position of the image on the canvas
+        img_width, img_height = self.display_image.size
+        img_x = (canvas_width - img_width) // 2
+        img_y = (canvas_height - img_height) // 2
+        
+        # Check if within image bounds
+        if (img_x <= event.x <= img_x + img_width and 
+            img_y <= event.y <= img_y + img_height):
+            
+            # Calculate position relative to the image
+            rel_x = event.x - img_x
+            rel_y = event.y - img_y
+            
+            # Scale coordinates to original image size if zoomed
+            if hasattr(self, 'zoom_level'):
+                scale_x = self.current_image.width / img_width
+                scale_y = self.current_image.height / img_height
+                img_x_pos = int(rel_x * scale_x)
+                img_y_pos = int(rel_y * scale_y)
+            else:
+                img_x_pos = rel_x
+                img_y_pos = rel_y
+            
+            # Draw a line from last point to current point
+            if hasattr(self, 'draw_preview'):
+                self.draw_preview.line(
+                    [self.draw_last_point, (img_x_pos, img_y_pos)],
+                    fill=self.draw_color,
+                    width=self.draw_size
+                )
+                
+                # Draw a circle at the end point for smoother lines
+                self.draw_preview.ellipse(
+                    [(img_x_pos - self.draw_size//2, img_y_pos - self.draw_size//2),
+                    (img_x_pos + self.draw_size//2, img_y_pos + self.draw_size//2)],
+                    fill=self.draw_color
+                )
+                
+                # Update the last point
+                self.draw_last_point = (img_x_pos, img_y_pos)
+                
+                # Update display
+                self.display_drawing_preview()
+
+    def stop_drawing(self, event):
+        """Stop drawing and apply changes to the image."""
+        if self.active_tool != "draw" or self.current_image is None:
+            return
+        
+        # Apply the drawing to the actual image
+        self.tools.apply_drawing()
+        
+        # Reset drawing state
+        self.draw_last_point = None
+
+    def display_drawing_preview(self):
+        """Display the drawing preview on the canvas."""
+        if not hasattr(self, 'draw_overlay') or self.draw_overlay is None:
+            return
+        
+        # Create a copy that's properly sized for display
+        if hasattr(self, 'zoom_level'):
+            preview_width = int(self.draw_overlay.width * self.zoom_level)
+            preview_height = int(self.draw_overlay.height * self.zoom_level)
+            display_preview = self.draw_overlay.resize((preview_width, preview_height), Image.LANCZOS)
+        else:
+            display_preview = self.draw_overlay.copy()
+        
+        # Update the display
+        self.tk_image = ImageTk.PhotoImage(display_preview)
+        self.canvas.delete("all")
+        self.canvas.create_image(
+            self.canvas.winfo_width()//2, 
+            self.canvas.winfo_height()//2, 
+            image=self.tk_image, 
+            anchor=tk.CENTER
+        )
 
     def place_text_on_canvas(self, event):
         """Handle click event to place text at the clicked position."""
         if self.active_tool != "text" or self.current_image is None:
+            return
+        
+        # Check if display_image exists
+        if self.display_image is None:
+            self.status_bar.configure(text="Please load an image first")
             return
         
         # Get click position relative to the image
@@ -505,6 +831,7 @@ class ModernImageEditor:
             
             # Create an editable text field on the canvas
             self.create_editable_text(img_x_pos, img_y_pos, event.x, event.y)
+
 
     def create_editable_text(self, img_x, img_y, canvas_x, canvas_y):
         """Create an editable text field directly on the canvas."""

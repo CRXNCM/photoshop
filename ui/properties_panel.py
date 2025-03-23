@@ -3,40 +3,31 @@ import customtkinter as ctk
 from tkinter import colorchooser
 
 class PropertiesPanel:
-    def __init__(self, editor, parent_frame):
+    def __init__(self, editor, parent):
         self.editor = editor
-        self.parent_frame = parent_frame
-        
-        # Create main frame for properties panel
-        self.frame = ctk.CTkFrame(parent_frame, width=450)
-        self.frame.pack(side=tk.LEFT, fill=tk.Y, padx=(10, 0))
-        
-        # Create header
-        self.header_label = ctk.CTkLabel(
-            self.frame, 
-            text="Tool Properties", 
-            font=ctk.CTkFont(size=16, weight="bold")
-        )
-        self.header_label.pack(pady=(10, 15), padx=10)
-        
-        # Create container for tool-specific properties
-        self.properties_container = ctk.CTkFrame(self.frame)
-        self.properties_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
-        # Create empty label for when no tool is selected
-        self.empty_label = ctk.CTkLabel(
-            self.properties_container,
-            text="Select a tool",
-            wraplength=220
-        )
-        self.empty_label.pack(pady=50)
+        self.parent = parent
+        self.properties_container = parent
+    
+        # Create the panel frame that will contain all the properties widgets
+        self.panel = ctk.CTkFrame(self.parent)
+        self.panel.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+    
+        # Initialize with empty content or default message
+        self.default_label = ctk.CTkLabel(self.panel, text="Select a tool to see its properties")
+        self.default_label.pack(pady=20)
+
+        self.empty_label = ctk.CTkLabel(self.panel, text="No tool selected")
+    
+    # Initialize header label
+        self.header_label = ctk.CTkLabel(self.panel, text="Tool Properties", font=("Arial", 14, "bold"))
+        self.header_label.pack(pady=(0, 10))
         
         # Initialize text properties frame
         self.create_text_properties()
-        
+    
         # Hide all property frames initially
         self.hide_all_properties()
-        
+    
         # Default text properties
         self.text_properties = {
             "font_family": "Arial",
@@ -45,7 +36,24 @@ class PropertiesPanel:
             "italic": False,
             "color": "#000000"
         }
-    
+        self.draw_properties = {
+        "color": "#FF0000",  # Default: Red
+        "size": 3            # Default: 3px
+        }
+    def show_tool_properties(self, tool_name):
+        """Show properties for the selected tool."""
+        self.hide_all_properties()
+        
+        if tool_name == "text":
+            self.show_text_properties()
+        elif tool_name == "draw":
+            self.show_draw_properties()
+        # Add other tools as needed
+        else:
+            # Show default/empty panel
+            self.empty_label.pack(pady=50)
+            self.header_label.configure(text="Tool Properties")
+
     def create_text_properties(self):
         """Create properties for text tool."""
         self.text_frame = ctk.CTkFrame(self.properties_container)
@@ -73,7 +81,7 @@ class PropertiesPanel:
         self.font_size_slider = ctk.CTkSlider(
             self.text_frame,
             from_=8,
-            to=72,
+            to=200,
             number_of_steps=64,
             command=self.update_font_size
         )
@@ -209,3 +217,126 @@ class PropertiesPanel:
             )
         else:
             print("Text tool not fully implemented in the editor")
+
+    def show_draw_properties(self):
+        """Show drawing tool properties."""
+        self.hide_all_properties()
+        self.empty_label.pack_forget()
+        
+        # Initialize draw properties if not already done
+        if not hasattr(self, 'draw_properties'):
+            self.draw_properties = {
+                "color": "#FF0000",  # Default: Red
+                "size": 3,           # Default: 3px
+                "opacity": 100,      # Default: 100%
+                "brush_type": "Round" # Default: Round
+            }
+        
+        # Create color picker
+        color_frame = ctk.CTkFrame(self.panel)
+        color_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        color_label = ctk.CTkLabel(color_frame, text="Color:")
+        color_label.pack(side=tk.LEFT, padx=5)
+        
+        # Create a button that opens a color chooser
+        self.color_btn = ctk.CTkButton(
+            color_frame, 
+            text="", 
+            width=30, 
+            height=20, 
+            fg_color=self.draw_properties["color"],
+            command=self.choose_draw_color
+        )
+        self.color_btn.pack(side=tk.RIGHT, padx=5)
+        
+        # Create brush size slider
+        size_frame = ctk.CTkFrame(self.panel)
+        size_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        size_label = ctk.CTkLabel(size_frame, text="Brush Size:")
+        size_label.pack(anchor="w", padx=5)
+        
+        self.size_slider = ctk.CTkSlider(
+            size_frame,
+            from_=1,
+            to=20,
+            number_of_steps=19,
+            command=self.update_brush_size
+        )
+        self.size_slider.set(self.draw_properties["size"])
+        self.size_slider.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Display current size value
+        self.size_value_label = ctk.CTkLabel(size_frame, text=f"{self.draw_properties['size']}px")
+        self.size_value_label.pack(anchor="e", padx=5)
+        
+        # Create opacity slider
+        opacity_frame = ctk.CTkFrame(self.panel)
+        opacity_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        opacity_label = ctk.CTkLabel(opacity_frame, text="Opacity:")
+        opacity_label.pack(anchor="w", padx=5)
+        
+        self.opacity_slider = ctk.CTkSlider(
+            opacity_frame,
+            from_=0,
+            to=100,
+            number_of_steps=100,
+            command=self.update_opacity
+        )
+        self.opacity_slider.set(self.draw_properties["opacity"])
+        self.opacity_slider.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Display current opacity value
+        self.opacity_value_label = ctk.CTkLabel(opacity_frame, text=f"{self.draw_properties['opacity']}%")
+        self.opacity_value_label.pack(anchor="e", padx=5)
+        
+        # Create brush type dropdown
+        brush_type_frame = ctk.CTkFrame(self.panel)
+        brush_type_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        brush_type_label = ctk.CTkLabel(brush_type_frame, text="Brush Type:")
+        brush_type_label.pack(anchor="w", padx=5)
+        
+        available_brush_types = ["Round", "Square", "Diamond"]
+        
+        self.brush_type_var = tk.StringVar(value=self.draw_properties["brush_type"])
+        self.brush_type_dropdown = ctk.CTkOptionMenu(
+            brush_type_frame,
+            values=available_brush_types,
+            variable=self.brush_type_var,
+            command=self.update_brush_type
+        )
+        self.brush_type_dropdown.pack(fill="x", pady=(5, 10), padx=10)
+        
+    def choose_draw_color(self):
+        """Open color chooser dialog for drawing color."""
+        from tkinter import colorchooser
+        color = colorchooser.askcolor(initialcolor=self.draw_properties["color"])[1]
+        if color:
+            self.draw_properties["color"] = color
+            self.color_btn.configure(fg_color=color)
+            
+            # Update active drawing color if draw tool is active
+            if self.editor.active_tool == "draw":
+                self.editor.draw_color = color
+
+    def update_opacity(self, value):
+        """Update the opacity for drawing."""
+        opacity = int(value)
+        self.draw_properties["opacity"] = opacity
+        self.opacity_value_label.configure(text=f"{opacity}%")
+        
+        # Update active drawing opacity if draw tool is active
+        if self.editor.active_tool == "draw":
+            self.editor.draw_opacity = opacity
+            
+    def update_brush_type(self, brush_type):
+        """Update the brush type for drawing."""
+        self.draw_properties["brush_type"] = brush_type
+        print(f"Brush type updated to: {brush_type}")
+        
+        # Update active drawing brush type if draw tool is active
+        if self.editor.active_tool == "draw":
+            self.editor.draw_brush_type = brush_type

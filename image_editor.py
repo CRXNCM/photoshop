@@ -1094,6 +1094,13 @@ class ModernImageEditor:
             messagebox.showerror("Error", "Unsupported file type. Please drop an image file.")
 
 if __name__ == "__main__":
-    root = ctk.CTk()
-    app = ModernImageEditor(root)
-    root.mainloop()
+    # Import and use the splash screen
+    try:
+        from splash_screen import show_splash_and_start_app
+        show_splash_and_start_app()
+    except Exception as e:
+        # Fallback to direct launch if splash screen fails
+        print(f"Splash screen error: {e}")
+        root = ctk.CTk()
+        app = ModernImageEditor(root)
+        root.mainloop()

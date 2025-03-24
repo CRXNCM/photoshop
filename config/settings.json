@@ -6,13 +6,5 @@
         "max_history_states": 20,
         "max_image_dimension": 10000,
         "use_multithreading": true
-    },
-    "measurement": {
-        "default_unit": "Pixels",
-        "show_rulers": true,
-        "show_grid": true,
-        "grid_size": 20,
-        "grid_color": "#808080",
-        "snap_to_grid": false
     }
 }

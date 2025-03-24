@@ -7,8 +7,11 @@ import requests
 import cairosvg
 import json
 from tkinter import filedialog, messagebox
-from ui.settings_manager import SettingsManager
 
+from ui.settings_manager import SettingsManager
+from layers.layer import Layer
+from layers.layer_manager import LayerManager
+from ui.layer_panel import LayerPanel
 
 class MenuManager:
     def __init__(self, editor):
@@ -16,7 +19,7 @@ class MenuManager:
         self.recent_files = self.load_recent_files()
         self.max_recent_files = 5
 
-        self.settings_manager = self.editor.SettingsManager
+        self.settings_manager = self.editor.settings_manager
         self.create_menu()
     
     def load_recent_files(self):
@@ -174,6 +177,18 @@ class MenuManager:
         self.image_menu.add_command(label="Rotate Right", command=lambda: self.editor.rotate_image(90), accelerator="Right Arrow")
         self.image_menu.add_command(label="Flip Horizontal", command=self.editor.flip_horizontal, accelerator="F")
         self.image_menu.add_command(label="Flip Vertical", command=self.editor.flip_vertical, accelerator="Shift+F")
+# In the create_menu method of MenuManager class
+        # Add a new "Layer" menu
+        self.layer_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.menu_bar.add_cascade(label="Layer", menu=self.layer_menu)
+
+        # Add layer operations
+        self.layer_menu.add_command(label="New Layer", command=self.editor.layer_manager.add_layer, accelerator="Shift+Ctrl+N")
+        self.layer_menu.add_command(label="Duplicate Layer", command=self.editor.layer_manager.duplicate_layer, accelerator="Shift+Ctrl+D")
+        self.layer_menu.add_command(label="Delete Layer", command=self.editor.layer_manager.delete_layer, accelerator="Shift+Ctrl+Delete")
+        self.layer_menu.add_separator()
+        self.layer_menu.add_command(label="Merge Down", command=lambda: self.editor.layer_manager.merge_with_below(), accelerator="Ctrl+E")
+        self.layer_menu.add_command(label="Flatten Image", command=self.editor.layer_manager.flatten_image, accelerator="Shift+Ctrl+E")
 
         # Filters menu
         self.filters_menu = tk.Menu(self.menu_bar, tearoff=0)
@@ -295,19 +310,31 @@ class MenuManager:
             messagebox.showerror("Error", f"File not found: {filepath}")
             
     def open_image_from_path(self, filepath):
-        """Open an image from a specific file path"""
+        """Open an image from a specific file path using the layer system"""
         try:
             # Load the image
             image = Image.open(filepath)
             
-            # Store the image
-            self.current_image = image
+            # Initialize the layer manager with the correct canvas size
+            self.layer_manager.canvas_size = image.size
+            
+            # Clear existing layers
+            self.layer_manager.layers = []
+            
+            # Create a background layer with the loaded image
+            bg_layer = Layer(image, name="Background")
+            self.layer_manager.add_layer(bg_layer)
+            
+            # Store the original image for reset functionality
             self.original_image = image.copy()
             self.image_path = filepath
             
             # Clear history
             self.history = []
             self.history_index = -1
+            
+            # Get the composite image from layer manager
+            self.current_image = self.layer_manager.get_composite_image()
             
             # Display the image
             self.display_image_on_canvas()
@@ -316,14 +343,15 @@ class MenuManager:
             self.update_ui_state()
             
             # Add to recent files
-            if hasattr(self.toolbar, 'add_to_recent_files'):
-                self.toolbar.add_to_recent_files(filepath)
+            if hasattr(self, 'menu_manager'):
+                self.menu_manager.add_to_recent_files(filepath)
             
             # Update status
             self.status_bar.configure(text=f"Opened: {filepath}")
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to open image: {str(e)}")
+
 
     def clear_recent_files(self):
         """Clear the recent files list"""
@@ -334,111 +362,116 @@ class MenuManager:
     def new_image(self):
         """Create a new blank image"""
         # Create a dialog to get dimensions
-        new_window = ctk.CTkToplevel(self.editor.root)
-        new_window.title("New Image")
-        new_window.geometry("300x200")
-        new_window.resizable(False, False)
-        new_window.transient(self.editor.root)  # Make it a modal dialog
-        new_window.grab_set()
+        dialog = ctk.CTkToplevel(self.editor.root)
+        dialog.title("New Image")
+        dialog.geometry("300x200")
+        dialog.resizable(False, False)
+        dialog.transient(self.editor.root)
+        dialog.grab_set()
         
         # Center the window
-        new_window.update_idletasks()
-        width = new_window.winfo_width()
-        height = new_window.winfo_height()
-        x = (new_window.winfo_screenwidth() // 2) - (width // 2)
-        y = (new_window.winfo_screenheight() // 2) - (height // 2)
-        new_window.geometry(f"{width}x{height}+{x}+{y}")
+        dialog.update_idletasks()
+        width = dialog.winfo_width()
+        height = dialog.winfo_height()
+        x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+        y = (dialog.winfo_screenheight() // 2) - (height // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
         
-        # Width input
-        width_frame = ctk.CTkFrame(new_window)
-        width_frame.pack(fill=tk.X, padx=20, pady=(20, 10))
+        # Add content
+        title_label = ctk.CTkLabel(dialog, text="Create New Image", font=ctk.CTkFont(size=16, weight="bold"))
+        title_label.pack(pady=(15, 20))
         
-        width_label = ctk.CTkLabel(width_frame, text="Width:")
-        width_label.pack(side=tk.LEFT, padx=(0, 10))
+        # Width and height inputs
+        dimensions_frame = ctk.CTkFrame(dialog)
+        dimensions_frame.pack(fill="x", padx=20, pady=10)
+        
+        width_label = ctk.CTkLabel(dimensions_frame, text="Width:")
+        width_label.grid(row=0, column=0, padx=5, pady=5, sticky="e")
         
         width_var = tk.StringVar(value="800")
-        width_entry = ctk.CTkEntry(width_frame, textvariable=width_var)
-        width_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        width_entry = ctk.CTkEntry(dimensions_frame, textvariable=width_var, width=80)
+        width_entry.grid(row=0, column=1, padx=5, pady=5, sticky="w")
         
-        # Height input
-        height_frame = ctk.CTkFrame(new_window)
-        height_frame.pack(fill=tk.X, padx=20, pady=10)
-        
-        height_label = ctk.CTkLabel(height_frame, text="Height:")
-        height_label.pack(side=tk.LEFT, padx=(0, 10))
+        height_label = ctk.CTkLabel(dimensions_frame, text="Height:")
+        height_label.grid(row=1, column=0, padx=5, pady=5, sticky="e")
         
         height_var = tk.StringVar(value="600")
-        height_entry = ctk.CTkEntry(height_frame, textvariable=height_var)
-        height_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        height_entry = ctk.CTkEntry(dimensions_frame, textvariable=height_var, width=80)
+        height_entry.grid(row=1, column=1, padx=5, pady=5, sticky="w")
         
         # Background color
-        color_frame = ctk.CTkFrame(new_window)
-        color_frame.pack(fill=tk.X, padx=20, pady=10)
+        color_frame = ctk.CTkFrame(dialog)
+        color_frame.pack(fill="x", padx=20, pady=10)
         
         color_label = ctk.CTkLabel(color_frame, text="Background:")
-        color_label.pack(side=tk.LEFT, padx=(0, 10))
+        color_label.grid(row=0, column=0, padx=5, pady=5, sticky="e")
         
         color_var = tk.StringVar(value="white")
         color_options = ["white", "black", "transparent"]
         color_dropdown = ctk.CTkOptionMenu(color_frame, values=color_options, variable=color_var)
-        color_dropdown.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        color_dropdown.grid(row=0, column=1, padx=5, pady=5, sticky="w")
         
         # Buttons
-        button_frame = ctk.CTkFrame(new_window)
-        button_frame.pack(fill=tk.X, padx=20, pady=(10, 20))
+        button_frame = ctk.CTkFrame(dialog)
+        button_frame.pack(fill="x", padx=20, pady=(10, 15))
         
-        def create_image():
+        def create():
             try:
                 width = int(width_var.get())
                 height = int(height_var.get())
-                bg_color = color_var.get()
                 
-                # Validate dimensions
-                if width <= 0 or height <= 0 or width > 5000 or height > 5000:
-                    messagebox.showerror("Error", "Invalid dimensions. Width and height must be between 1 and 5000 pixels.")
+                if width <= 0 or height <= 0:
+                    messagebox.showerror("Invalid Dimensions", "Width and height must be positive values.")
                     return
                 
-                # Create the new image
-                if bg_color == "transparent":
-                    new_image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-                else:
-                    new_image = Image.new("RGB", (width, height), bg_color)
+                # Create a new blank image with selected background
+                bg_color = (255, 255, 255, 255)  # Default white
+                if color_var.get() == "black":
+                    bg_color = (0, 0, 0, 255)
+                elif color_var.get() == "transparent":
+                    bg_color = (255, 255, 255, 0)
+                    
+                new_image = Image.new("RGBA", (width, height), bg_color)
                 
                 # Set it as the current image
-                self.editor.current_image = new_image
-                self.editor.original_image = new_image.copy()
-                self.editor.image_path = None
-                self.editor.history = []
-                self.editor.history_index = -1
+                self.editor.original_image = new_image
+                self.editor.current_image = new_image.copy()
                 
-                # Display the new image
+                # Set canvas size for layer manager
+                self.editor.layer_manager.canvas_size = (width, height)
+                
+                # Clear existing layers
+                self.editor.layer_manager.clear_layers()
+                
+                # Create a Layer object first, then add it to the layer manager
+                from layers.layer import Layer  # Import at the top of the file if not already imported
+                bg_layer = Layer(new_image, name="Background")
+                self.editor.layer_manager.add_layer(bg_layer)
+                
+                # Display the image
                 self.editor.display_image_on_canvas()
+                self.editor.status_bar.configure(text=f"Created new image ({width}x{height})")
                 
-                # Update UI state
-                self.editor.update_ui_state()
+                # Clear history when creating a new image
+                self.editor.history = [self.editor.current_image.copy()]
+                self.editor.history_index = 0
+                self.editor.update_undo_redo_buttons()
                 
                 # Close the dialog
-                new_window.destroy()
+                dialog.destroy()
                 
             except ValueError:
-                messagebox.showerror("Error", "Width and height must be valid numbers.")
+                messagebox.showerror("Invalid Input", "Please enter valid numbers for width and height.")
+
+        cancel_button = ctk.CTkButton(button_frame, text="Cancel", command=dialog.destroy, width=80)
+        cancel_button.pack(side="left", padx=10)
         
-        cancel_btn = ctk.CTkButton(
-            button_frame, 
-            text="Cancel", 
-            command=new_window.destroy,
-            width=80
-        )
-        cancel_btn.pack(side=tk.RIGHT, padx=(10, 0))
+        create_button = ctk.CTkButton(button_frame, text="Create", command=create, width=80)
+        create_button.pack(side="right", padx=10)
         
-        create_btn = ctk.CTkButton(
-            button_frame, 
-            text="Create", 
-            command=create_image,
-            width=80
-        )
-        create_btn.pack(side=tk.RIGHT)
-    
+        # Focus the width entry
+        width_entry.focus_set()
+
     def export_image(self):
         """Export the current image in different formats"""
         if not self.editor.current_image:

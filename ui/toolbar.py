@@ -13,7 +13,6 @@ class Toolbarr:
     def __init__(self, editor):
         self.editor = editor
         self.icons = {}  # Dictionary to store loaded icons
-        self.recent_files = self.load_recent_files()
         self.max_recent_files = 5 
         self.load_fontawesome_icons()
         self.create_toolbar()

@@ -10,6 +10,9 @@ from ui.sidebar import Sidebar
 from ui.menu_manager import MenuManager
 from ui.properties_panel import PropertiesPanel
 from ui.settings_manager import SettingsManager
+from layers.layer import Layer
+from layers.layer_manager import LayerManager
+from ui.layer_panel import LayerPanel
 
 # import you utilities
 from utils.keyboard_shortcuts import KeyboardShortcuts
@@ -47,18 +50,23 @@ class ModernImageEditor:
         self.history_index = -1
         self.max_history = 20  # Maximum number of states to keep in history
         
+        self.layer_manager = LayerManager(self)
         self.tools = Toolss(self)
         
         self.settings_manager.apply_settings()
+        
         self.create_ui()
-        self.keyboard_shortcuts = KeyboardShortcuts(self)
-        self.menu_manager.create_menu()  # Add this line
+        self.keyboard_shortcuts = KeyboardShortcuts(self)  # Add this line
         self.setup_drag_drop()
         self.setup_zoom_functionality()
         self.tools = Toolss(self)
         self.root.bind("<Escape>", self.cancel_text_editing)
         self.menu_manager = MenuManager(self)
         self.menu_manager.settings_manager.apply_settings()
+        self.menu_manager.create_menu()
+        # Initialize the layer manager
+        
+
 
     def create_ui(self):
         # Create the toolbar first - it will appear at the top
@@ -75,6 +83,10 @@ class ModernImageEditor:
         # Left sidebar for tools and adjustments
         self.sidebar = ctk.CTkFrame(self.main_frame, width=250)
         self.sidebar.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
+        # Create the layer panel in the sidebar or a dedicated frame
+        self.layer_panel_frame = ctk.CTkFrame(self.sidebar)  # Or another parent frame
+        self.layer_panel_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.layer_panel = LayerPanel(self, self.layer_panel_frame)
 
         # Middle content area for canvas
         self.content_frame = ctk.CTkFrame(self.main_frame)
@@ -269,25 +281,45 @@ class ModernImageEditor:
             self.status_bar.configure(text=f"Image cropped to {self.current_image.width}x{self.current_image.height}")
 
     def push_to_history(self):
-        """Add current state to history."""
-        if self.current_image is None:
+        """Add current state to history"""
+        if not hasattr(self, 'layer_manager') or not self.layer_manager.layers:
             return
-            
+        
+        # Create a deep copy of the current layer stack
+        layer_stack_copy = []
+        for layer in self.layer_manager.layers:
+            layer_copy = Layer(
+                image=layer.image.copy() if layer.image else None,
+                name=layer.name,
+                visible=layer.visible,
+                opacity=layer.opacity,
+                blend_mode=layer.blend_mode
+            )
+            layer_copy.x_offset = layer.x_offset
+            layer_copy.y_offset = layer.y_offset
+            layer_stack_copy.append(layer_copy)
+        
         # If we're not at the end of the history, truncate it
         if self.history_index < len(self.history) - 1:
             self.history = self.history[:self.history_index + 1]
         
-        # Add current state to history
-        self.history.append(self.current_image.copy())
-        self.history_index = len(self.history) - 1
+        # Add the copy to history
+        self.history.append({
+            'layers': layer_stack_copy,
+            'active_index': self.layer_manager.active_layer_index
+        })
         
         # Limit history size
-        if len(self.history) > self.max_history:
-            self.history.pop(0)
-            self.history_index -= 1
+        max_history = getattr(self, 'max_history_states', 20)
+        if len(self.history) > max_history:
+            self.history = self.history[-max_history:]
         
-        # Update UI
+        # Update history index
+        self.history_index = len(self.history) - 1
+        
+        # Update undo/redo buttons
         self.update_undo_redo_buttons()
+
     def clear_panel(self):
         """Clear all widgets from the properties panel."""
         # Destroy all widgets in the panel
@@ -427,24 +459,52 @@ class ModernImageEditor:
         else:
             messagebox.showerror("Error", "Unsupported file type. Please drop an image file.")
 
-    def undo(self, event=None):
-        """Undo the last action."""
-        if self.history_index > 0:
-            self.history_index -= 1
-            self.current_image = self.history[self.history_index].copy()
-            self.display_image_on_canvas()
-            self.status_bar.configure(text="Undo performed")
-            self.update_undo_redo_buttons()
+    def undo(self):
+        """Undo the last action"""
+        if not hasattr(self, 'layer_manager') or self.history_index <= 0:
+            return
+        
+        # Move back in history
+        self.history_index -= 1
+        
+        # Restore the state
+        state = self.history[self.history_index]
+        self.layer_manager.layers = state['layers']
+        self.layer_manager.active_layer_index = state['active_index']
+        
+        # Update the display
+        self.current_image = self.layer_manager.get_composite_image()
+        self.display_image_on_canvas()
+        
+        # Update layer panel
+        self.layer_panel.update_layers()
+        
+        # Update undo/redo buttons
+        self.update_undo_redo_buttons()
 
-    def redo(self, event=None):
-        """Redo the last undone action."""
-        if self.history_index < len(self.history) - 1:
-            self.history_index += 1
-            self.current_image = self.history[self.history_index].copy()
-            self.display_image_on_canvas()
-            self.status_bar.configure(text="Redo performed")
-            self.update_undo_redo_buttons()
-
+    def redo(self):
+        """Redo the last undone action"""
+        if not hasattr(self, 'layer_manager') or self.history_index >= len(self.history) - 1:
+            return
+        
+        # Move forward in history
+        self.history_index += 1
+        
+        # Restore the state
+        state = self.history[self.history_index]
+        self.layer_manager.layers = state['layers']
+        self.layer_manager.active_layer_index = state['active_index']
+        
+        # Update the display
+        self.current_image = self.layer_manager.get_composite_image()
+        self.display_image_on_canvas()
+        
+        # Update layer panel
+        self.layer_panel.update_layers()
+        
+        # Update undo/redo buttons
+        self.update_undo_redo_buttons()
+        
     def update_undo_redo_buttons(self):
         """Update the state of undo/redo buttons based on history."""
         # Enable/disable undo button

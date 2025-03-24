@@ -1,6 +1,8 @@
 import tkinter as tk
 import customtkinter as ctk
-
+from layers.layer import Layer
+from layers.layer_manager import LayerManager
+from ui.layer_panel import LayerPanel
 class KeyboardShortcuts:
     def __init__(self, editor):
         self.editor = editor
@@ -37,7 +39,15 @@ class KeyboardShortcuts:
         self.editor.root.bind("g", self.editor.apply_grayscale)
         self.editor.root.bind("<Control-b>", lambda e: self.editor.apply_blur())
         self.editor.root.bind("<Control-h>", lambda e: self.editor.apply_sharpen())
-        
+        # In the setup_shortcuts method
+        # Layer shortcuts
+        self.editor.root.bind("<Shift-Control-n>", lambda e: self.editor.layer_manager.add_layer())
+        self.editor.root.bind("<Shift-Control-d>", lambda e: self.editor.layer_manager.duplicate_layer())
+        self.editor.root.bind("<Shift-Control-Delete>", lambda e: self.editor.layer_manager.delete_layer())
+        self.editor.root.bind("<Control-e>", lambda e: self.editor.layer_manager.merge_with_below())
+        self.editor.root.bind("<Shift-Control-e>", lambda e: self.editor.layer_manager.flatten_image())
+
+                
         # View
         self.editor.root.bind("<Control-plus>", lambda e: self.editor.zoom_in())
         self.editor.root.bind("<Control-minus>", lambda e: self.editor.zoom_out())

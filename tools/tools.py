@@ -199,28 +199,73 @@ class Toolss:
         # Show error message
         messagebox.showerror("Error", f"Could not open image: {error_message}")
 
-    def save_image(self):
-        if self.editor.current_image:
-            file_path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG", "*.png"), ("JPEG", "*.jpg")])
-            if file_path:
-                self.editor.current_image.save(file_path)
-                self.editor.status_bar.configure(text=f"Saved: {os.path.basename(file_path)}")
-    
-    def display_image_on_canvas(self):
-        if self.editor.current_image:
-            self.editor.tk_image = ImageTk.PhotoImage(self.editor.current_image)
-            self.editor.canvas.delete("all")
-            self.editor.canvas.create_image(
-                self.editor.canvas.winfo_width()//2, 
-                self.editor.canvas.winfo_height()//2, 
-                image=self.editor.tk_image, 
-                anchor="center"
+    def save_image(self, save_as=False):
+        """Save the current image"""
+        if not hasattr(self, 'layer_manager') or not self.layer_manager.layers:
+            messagebox.showinfo("Info", "No image to save")
+            return
+        
+        # Get the composite image from all layers
+        composite = self.layer_manager.get_composite_image()
+        if not composite:
+            return
+        
+        # If save_as or no path exists, ask for a path
+        if save_as or not self.image_path:
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".png",
+                filetypes=[("PNG", "*.png"), ("JPEG", "*.jpg"), ("All Files", "*.*")]
             )
+            if not file_path:
+                return  # User cancelled
+            self.image_path = file_path
+        
+        # Save the composite image
+        try:
+            # Convert to RGB if saving as JPEG
+            if self.image_path.lower().endswith(('.jpg', '.jpeg')):
+                if composite.mode == 'RGBA':
+                    rgb_image = Image.new('RGB', composite.size, (255, 255, 255))
+                    rgb_image.paste(composite, mask=composite.split()[3])
+                    rgb_image.save(self.image_path, quality=95)
+                else:
+                    composite.convert('RGB').save(self.image_path, quality=95)
+            else:
+                composite.save(self.image_path)
             
-            # Update resolution label
-            width, height = self.editor.current_image.size
-            self.editor.resolution_label.configure(text=f"{width}x{height}")
-    
+            self.status_bar.configure(text=f"Saved: {os.path.basename(self.image_path)}")
+            
+            # Add to recent files
+            if hasattr(self, 'menu_manager'):
+                self.menu_manager.add_to_recent_files(self.image_path)
+        
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save image: {str(e)}")
+
+    def display_image_on_canvas(self):
+        """Display the current image on the canvas"""
+        if self.editor.current_image:
+            # Get the current zoom level
+            zoom_factor = self.editor.zoom_level / 100.0
+            
+            # Resize the image according to zoom level
+            if zoom_factor != 1.0:
+                width = int(self.editor.current_image.width * zoom_factor)
+                height = int(self.editor.current_image.height * zoom_factor)
+                resized_image = self.editor.current_image.resize((width, height), Image.LANCZOS)
+            else:
+                resized_image = self.editor.current_image
+            
+            # Convert to PhotoImage for display
+            self.editor.photo_image = ImageTk.PhotoImage(resized_image)
+            
+            # Update canvas
+            self.editor.canvas.delete("image")
+            self.editor.canvas.create_image(0, 0, anchor="nw", image=self.editor.photo_image, tags="image")
+            
+            # Update canvas scrollregion
+            self.editor.canvas.config(scrollregion=self.editor.canvas.bbox("all"))
+
     def resize_image(self):
         """Enhanced resize image tool with professional features."""
         if not self.editor.current_image:
